@@ -91,7 +91,7 @@ Your Simple, 3-Step Action Plan (in {language}):
 
 # --- LOAD THE MODEL & VECTOR STORE ---
 @st.cache_resource
-def load_models_and_db():
+def get_models_and_db():  # <-- CHANGED THE NAME
     try:
         embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2',
                                            model_kwargs={'device': 'cpu'})
@@ -113,7 +113,7 @@ def load_models_and_db():
         st.error("Did you run 'ingest.py' and push the 'vectorstores' folder to GitHub?")
         st.stop()
 
-retriever, llm = load_models_and_db()
+retriever, llm = get_models_and_db() # <-- CHANGED THE NAME
 
 # --- NEW HELPER FUNCTION ---
 def format_docs(docs):
