@@ -110,7 +110,7 @@ def get_models_and_db():
             search_type="similarity_score_threshold",
             search_kwargs={
                 "k": 3,
-                "score_threshold": 0.4
+                "score_threshold": 0.3
             }
         )
         
