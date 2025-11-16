@@ -40,18 +40,20 @@ header {visibility: hidden;}
     background-color: var(--secondary-background-color); color: var(--text-color);
     border: 1px solid var(--primary-color); border-radius: 8px;
 }
-div[data-testid="column"] {
-    background: transparent;
-    border: none;
-    border-radius: 10px;
-    padding: 10px;
-}
 /* Style the chat messages */
 div[data-testid="chat-message-container"] {
     background-color: var(--secondary-background-color);
     border-radius: 8px;
     padding: 10px;
     margin-bottom: 10px;
+}
+/* This is the tab styling from before */
+.stTabs [data-baseweb="tab"] {
+    background: transparent; color: var(--text-color); padding: 10px; transition: all 0.3s ease;
+}
+.stTabs [data-baseweb="tab"]:hover { background: var(--secondary-background-color); }
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    background: var(--secondary-background-color); color: var(--primary-color); border-bottom: 3px solid var(--primary-color);
 }
 </style>
 """, unsafe_allow_html=True)
@@ -68,7 +70,7 @@ DB_FAISS_PATH = "vectorstores/db_faiss"
 MODEL_NAME = "gemini-2.5-flash-lite"
 
 
-# --- RAG PROMPT TEMPLATE (for Column 2) ---
+# --- RAG PROMPT TEMPLATE ---
 rag_prompt_template = """
 You are 'Nyay-Saathi,' a kind legal friend.
 A common Indian citizen is asking for help.
@@ -156,13 +158,12 @@ language = st.selectbox(
 
 st.divider()
 
-# --- THE LAYOUT ---
-col1, col2 = st.columns(2)
+# --- THE NEW TAB-BASED LAYOUT ---
+tab1, tab2 = st.tabs(["**Samjhao** (Explain this Document)", "**Kya Karoon?** (Ask a Question)"])
 
-# --- COLUMN 1: SAMJHAO (EXPLAIN) ---
-# This part is unchanged
-with col1:
-    st.header("Samjhao (Explain this Document)")
+# --- TAB 1: SAMJHAO (EXPLAIN) ---
+with tab1:
+    st.header("Upload a Legal Document to Explain")
     st.write("Take a photo (or upload a PDF) of your legal notice or agreement.")
     
     uploaded_file = st.file_uploader("Choose a file...", type=["jpg", "jpeg", "png", "pdf"])
@@ -204,22 +205,19 @@ with col1:
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
 
-# --- COLUMN 2: KYA KAROON? (WHAT TO DO?) ---
-# --- THIS ENTIRE BLOCK IS UPDATED ---
-with col2:
-    st.header("Kya Karoon? (Ask a Question)")
+# --- TAB 2: KYA KAROON? (WHAT TO DO?) ---
+with tab2:
+    st.header("Ask for a simple action plan")
     st.write("Scared? Confused? Ask a question and get a simple 3-step plan **based on real guides.**")
 
     # 1. Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # 2. Display all past messages (THIS IS THE FIX)
-    # This loop now runs *before* the chat input, so all messages appear above it.
+    # 2. Display all past messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            # Display sources if they exist in the message
             if "sources" in message:
                 st.subheader("Sources I used:")
                 for doc in message["sources"]:
@@ -228,36 +226,27 @@ with col2:
     # 3. Define the chat input box (it will now appear at the bottom)
     if prompt := st.chat_input(f"Ask your follow-up question in {language}..."):
         
-        # 4. Add user's new message to history
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # 5. Get the AI's response
         with st.spinner("Your friend is checking the guides..."):
             try:
-                # 6. Create the chat history string
                 chat_history_str = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-4:-1]])
-                
-                # 7. Create the payload
                 invoke_payload = {
                     "question": prompt,
                     "language": language,
                     "chat_history": chat_history_str
                 }
                 
-                # 8. Call the RAG chain
                 response_dict = rag_chain_with_sources.invoke(invoke_payload) 
                 response = response_dict["answer"]
                 docs = response_dict["sources"]
                 
-                # 9. Add the AI's response to history (with sources)
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response,
                     "sources": docs
                 })
                 
-                # 10. Force the app to re-run from the top
-                # This will make the loop in step 2 display the new messages
                 st.rerun()
             
             except Exception as e:
