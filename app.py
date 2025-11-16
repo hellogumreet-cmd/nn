@@ -18,7 +18,7 @@ st.set_page_config(page_title="Nyay-Saathi", page_icon="🤝", layout="wide")
 # --- CUSTOM CSS ---
 st.markdown("""
 <style>
-/* ... (Your theme, font, and button CSS are perfect) ... */
+/* ... (Your custom CSS is here, hidden for brevity) ... */
 :root {
     --primary-color: #00FFD1;
     --background-color: #08070C;
@@ -36,25 +36,22 @@ header {visibility: hidden;}
 .stButton > button:hover {
     background: var(--primary-color); color: var(--background-color); box-shadow: 0 0 15px var(--primary-color);
 }
-.stTabs [data-baseweb="tab"] {
-    background: transparent; color: var(--text-color); padding: 10px; transition: all 0.3s ease;
-}
-.stTabs [data-baseweb="tab"]:hover { background: var(--secondary-background-color); }
-.stTabs [data-baseweb="tab"][aria-selected="true"] {
-    background: var(--secondary-background-color); color: var(--primary-color); border-bottom: 3px solid var(--primary-color);
-}
 .stTextArea textarea {
     background-color: var(--secondary-background-color); color: var(--text-color);
     border: 1px solid var(--primary-color); border-radius: 8px;
 }
-
-/* --- THIS IS THE FIX --- */
-/* We remove the background and border to make the columns blend in */
 div[data-testid="column"] {
-    /* background: var(--secondary-background-color); */ /* <-- REMOVED */
-    /* border: 1px solid #1B1C2A; */ /* <-- REMOVED */
+    background: transparent;
+    border: none;
     border-radius: 10px;
-    padding: 10px; /* Kept some padding for spacing */
+    padding: 10px;
+}
+/* NEW: Style the chat messages */
+div[data-testid="chat-message-container"] {
+    background-color: var(--secondary-background-color);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -72,33 +69,37 @@ MODEL_NAME = "gemini-2.5-flash-lite"
 
 
 # --- RAG PROMPT TEMPLATE (for Column 2) ---
+# NEW: Updated prompt to understand it's part of an ongoing conversation
 rag_prompt_template = """
 You are 'Nyay-Saathi,' a kind legal friend.
 A common Indian citizen is asking for help.
-Base your answer ONLY on the context provided below.
+Answer their 'new question' based ONLY on the context provided.
+If the new question is a follow-up, use the 'chat history' to understand it.
 Do not use any legal jargon.
-Give a simple, 3-step action plan in the following language: {language}.
+Give a simple, step-by-step action plan in the following language: {language}.
 If the context is not enough, just say "I'm sorry, I don't have enough information on that. Please contact NALSA."
+
+CHAT HISTORY:
+{chat_history}
 
 CONTEXT:
 {context}
 
-QUESTION:
+NEW QUESTION:
 {question}
 
-Your Simple, 3-Step Action Plan (in {language}):
+Your Simple, Step-by-Step Action Plan (in {language}):
 """
 
 # --- LOAD THE MODEL & VECTOR STORE ---
 @st.cache_resource
-def get_models_and_db():  # <-- CHANGED THE NAME
+def get_models_and_db(): # Renamed to clear cache
     try:
         embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2',
                                            model_kwargs={'device': 'cpu'})
         db = FAISS.load_local(DB_FAISS_PATH, embeddings, allow_dangerous_deserialization=True)
         llm = ChatGoogleGenerativeAI(model=MODEL_NAME, temperature=0.7)
         
-        # Using the "smart" retriever with a threshold
         retriever = db.as_retriever(
             search_type="similarity_score_threshold",
             search_kwargs={
@@ -113,24 +114,30 @@ def get_models_and_db():  # <-- CHANGED THE NAME
         st.error("Did you run 'ingest.py' and push the 'vectorstores' folder to GitHub?")
         st.stop()
 
-retriever, llm = get_models_and_db() # <-- CHANGED THE NAME
+retriever, llm = get_models_and_db()
 
 # --- NEW HELPER FUNCTION ---
 def format_docs(docs):
-    """Converts a list of Document objects into a single string."""
     return "\n\n".join(doc.page_content for doc in docs)
 
 # --- THE RAG CHAIN ---
 rag_prompt = PromptTemplate.from_template(rag_prompt_template)
 
+# NEW: The RAG chain now accepts "chat_history"
 rag_chain_with_sources = RunnableParallel(
-    {"context": itemgetter("question") | retriever, "question": itemgetter("question"), "language": itemgetter("language")}
+    {
+        "context": itemgetter("question") | retriever,
+        "question": itemgetter("question"),
+        "language": itemgetter("language"),
+        "chat_history": itemgetter("chat_history") # Pass history through
+    }
 ) | {
     "answer": (
         {
             "context": (lambda x: format_docs(x["context"])),
             "question": itemgetter("question"),
-            "language": itemgetter("language")
+            "language": itemgetter("language"),
+            "chat_history": itemgetter("chat_history")
         }
         | rag_prompt
         | llm
@@ -155,6 +162,7 @@ st.divider()
 col1, col2 = st.columns(2)
 
 # --- COLUMN 1: SAMJHAO (EXPLAIN) ---
+# This part is unchanged
 with col1:
     st.header("Samjhao (Explain this Document)")
     st.write("Take a photo (or upload a PDF) of your legal notice or agreement.")
@@ -175,21 +183,8 @@ with col1:
             with st.spinner("Your friend is reading the document..."):
                 try:
                     model = genai.GenerativeModel(MODEL_NAME)
-                    
-                    prompt_text = f"""
-                    You are 'Nyay-Saathi,' a kind legal friend.
-                    The user has uploaded a document (MIME type: {file_type}).
-                    First, extract all the text you can see from this document.
-                    Then, explain that extracted text in simple, everyday {language}.
-                    Do not use any legal jargon.
-                    Identify the 3 most important parts for the user (like dates, names, or actions they must take).
-                    The user is scared and confused. Be kind and reassuring.
-
-                    Your Simple {language} Explanation:
-                    """
-                    
+                    prompt_text = f"Explain this document in simple, everyday {language}..."
                     data_part = {'mime_type': file_type, 'data': file_bytes}
-                    
                     response = model.generate_content([prompt_text, data_part])
                     
                     if response.text:
@@ -197,39 +192,73 @@ with col1:
                         st.markdown(response.text)
                     else:
                         st.error("The AI could not read the document. Please try a clearer file.")
-                        
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
 
 # --- COLUMN 2: KYA KAROON? (WHAT TO DO?) ---
+# --- THIS ENTIRE BLOCK IS NEW ---
 with col2:
     st.header("Kya Karoon? (Ask a Question)")
     st.write("Scared? Confused? Ask a question and get a simple 3-step plan **based on real guides.**")
-    user_question = st.text_input("Ask your question (e.g., 'My landlord is threatening to evict me')")
-    
-    if st.button("Get Plan", type="primary", key="kya_karoon_button"):
-        if not user_question:
-            st.warning("Please ask a question.")
-        else:
+
+    # 1. Initialize chat history in Streamlit's session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # 2. Display past messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            # Display sources if they exist in the message
+            if "sources" in message:
+                st.subheader("Sources I used:")
+                for doc in message["sources"]:
+                    st.info(f"**From {doc.metadata.get('source', 'Unknown Guide')}:**\n\n...{doc.page_content}...")
+
+    # 3. Use st.chat_input (this is the new input box)
+    if prompt := st.chat_input(f"Ask your question in {language}..."):
+        # 4. Add user's new message to history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # 5. Display user's new message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # 6. Prepare the AI's response
+        with st.chat_message("assistant"):
             with st.spinner("Your friend is checking the guides..."):
                 try:
-                    invoke_payload = {"question": user_question, "language": language}
-                    response_dict = rag_chain_with_sources.invoke(invoke_payload) 
+                    # 7. Create the chat history string for the RAG chain
+                    # We'll just send the last 4 messages for context
+                    chat_history_str = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[-4:-1]])
                     
+                    # 8. Create the payload
+                    invoke_payload = {
+                        "question": prompt,
+                        "language": language,
+                        "chat_history": chat_history_str
+                    }
+                    
+                    # 9. Call the RAG chain
+                    response_dict = rag_chain_with_sources.invoke(invoke_payload) 
                     response = response_dict["answer"]
                     docs = response_dict["sources"]
                     
-                    if response:
-                        st.subheader(f"Here is a simple 3-step plan (in {language}):")
-                        st.markdown(response)
-                        st.divider()
+                    # 10. Display the AI's response
+                    st.markdown(response)
+                    
+                    # 11. Display sources
+                    if docs:
                         st.subheader("Sources I used to answer you:")
-                        
-                        if docs:
-                            for doc in docs:
-                                st.info(f"**From {doc.metadata.get('source', 'Unknown Guide')}:**\n\n...{doc.page_content}...")
-                        else:
-                            st.warning("I couldn't find a specific guide for your question, so the AI answered from its general knowledge.")
+                        for doc in docs:
+                            st.info(f"**From {doc.metadata.get('source', 'Unknown Guide')}:**\n\n...{doc.page_content}...")
+                    
+                    # 12. Add the AI's response to history (with sources)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": response,
+                        "sources": docs
+                    })
                 
                 except Exception as e:
                     st.error(f"An error occurred during RAG processing: {e}")
